@@ -1,0 +1,129 @@
+version: '3.8'
+
+#Docker Networks
+networks:
+  phpnet:
+    driver: bridge
+
+#Volumes
+volumes:
+  dbdata:
+    driver: local
+
+# Workflow
+services:
+  nginx:
+    build:
+      context: .
+      dockerfile: ./docker/nginx/Dockerfile
+    container_name: nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./src:/var/www/html:delegated
+    depends_on:
+      - php
+      - mariadb
+    networks:
+      - phpnet
+
+  mariadb:
+    image: mariadb
+    container_name: mariadb
+    restart: unless-stopped
+    tty: true
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE}
+      MYSQL_USER: ${DB_USERNAME} 
+      MYSQL_PASSWORD: ${DB_PASSWORD} 
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      SERVICE_TAGS: dev
+      SERVICE_NAME: mariadb
+    volumes:
+      - ./docker/mariadb/my.cnf:/etc/mysql/my.cnf
+      - dbdata:/var/lib/mysql/
+    networks:
+      - phpnet
+    command: ['mysqld', '--character-set-server=utf8mb4', '--collation-server=utf8mb4_unicode_ci']
+
+  redis:
+    image: "redis:alpine"
+    container_name: redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - phpnet
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: phpmyadmin
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      PMA_HOST: mariadb
+      PMA_PORT: 3306
+      PMA_ARBITRARY: 1
+    restart: always
+    depends_on:
+      - mariadb
+    ports:
+    - "8081:80"
+    volumes:
+      - /sessions
+    networks:
+      - phpnet
+    links:
+      - mariadb
+
+  php:
+    build:
+      context: .
+      dockerfile: ./docker/php/Dockerfile
+    container_name: php
+    volumes:
+      - ./src:/var/www/html:delegated
+    ports:
+      - "9000:9000"
+    networks:
+      - phpnet
+
+  composer:
+    build:
+      context: .
+      dockerfile: ./docker/php/composer/Dockerfile
+    container_name: composer
+    volumes:
+      - ./src:/var/www/html
+    working_dir: /var/www/html
+    depends_on:
+      - php
+    user: site
+    networks:
+      - phpnet
+    entrypoint: ['composer', '--ignore-platform-reqs']
+
+  npm:
+    image: node:15.0.1
+    container_name: npm
+    volumes:
+      - ./src:/var/www/html
+    working_dir: /var/www/html
+    entrypoint: ['npm']
+
+  artisan:
+    build:
+      context: .
+      dockerfile: ./docker/php/Dockerfile
+    container_name: artisan
+    volumes:
+      - ./src:/var/www/html:delegated
+    depends_on:
+      - mariadb
+    working_dir: /var/www/html
+    user: site
+    entrypoint: ['php', '/var/www/html/artisan']
+    networks:
+      - phpnet
